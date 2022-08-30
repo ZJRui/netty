@@ -287,11 +287,16 @@ public class HashedWheelTimer implements Timer {
 
         // Normalize ticksPerWheel to power of two and initialize the wheel.
         wheel = createWheel(ticksPerWheel);
+        // 这是一个标示符，用来快速计算任务应该呆的格子。
+        // 我们知道，给定一个deadline的定时任务，其应该呆的格子=deadline%wheel.length.但是%操作是个相对耗时的操作，所以使用一种变通的位运算代替：
+        // 因为一圈的长度为2的n次方，mask = 2^n-1后低位将全部是1，然后deadline&mast == deadline%wheel.length
+        // java中的HashMap也是使用这种处理方法
         mask = wheel.length - 1;
 
         // Convert tickDuration to nanos.
         long duration = unit.toNanos(tickDuration);
 
+        // 校验是否存在溢出。即指针转动的时间间隔不能太长而导致tickDuration*wheel.length>Long.MAX_VALUE
         // Prevent overflow.
         if (duration >= Long.MAX_VALUE / wheel.length) {
             throw new IllegalArgumentException(String.format(
@@ -309,6 +314,7 @@ public class HashedWheelTimer implements Timer {
 
         workerThread = threadFactory.newThread(worker);
 
+        // 这里默认是启动内存泄露检测：当HashedWheelTimer实例超过当前cpu可用核数*4的时候，将发出警告
         leak = leakDetection || !workerThread.isDaemon() ? leakDetector.track(this) : null;
 
         this.maxPendingTimeouts = maxPendingTimeouts;
@@ -448,6 +454,9 @@ public class HashedWheelTimer implements Timer {
 
         // Add the timeout to the timeout queue which will be processed on the next tick.
         // During processing all the queued HashedWheelTimeouts will be added to the correct HashedWheelBucket.
+        /**
+         * 这个延迟时间是针对当前时间而言的，因此这里我们将当前时间加上延迟时间 减去开始时间就是 时间轮的间隔时间
+         */
         long deadline = System.nanoTime() + unit.toNanos(delay) - startTime;
 
         // Guard against overflow.
