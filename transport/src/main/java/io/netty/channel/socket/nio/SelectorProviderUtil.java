@@ -52,6 +52,8 @@ final class SelectorProviderUtil {
          *  {@link SelectorProvider#provider()} which is called by each SocketChannel.open() otherwise.
          *
          *  See <a href="https://github.com/netty/netty/issues/2308">#2308</a>.
+         *
+         *  通过反射创建   new  ServerSocketChannel
          */
         if (family != null && method != null) {
             try {

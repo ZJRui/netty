@@ -179,6 +179,10 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
         if (argsLength > 4) {
             tailTaskQueueFactory = (EventLoopTaskQueueFactory) args[4];
         }
+        /**
+         * 这里将 SelectorProvider对象交给了NioEvenetLoop ， NioEventLoop对象的构造器中会使用SelectorProvier 来创建 Selector对象
+         * 不同的NioEventLoop 会有不同的Selector对象
+         */
         return new NioEventLoop(this, executor, selectorProvider,
                 selectStrategyFactory.newSelectStrategy(),
                 rejectedExecutionHandler, taskQueueFactory, tailTaskQueueFactory);

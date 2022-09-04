@@ -81,6 +81,13 @@ public abstract class MultithreadEventExecutorGroup extends AbstractEventExecuto
         for (int i = 0; i < nThreads; i ++) {
             boolean success = false;
             try {
+                /**
+                 * 注意这个args 数组，他的第一项是  io.netty.channel.nio.NioEventLoopGroup#NioEventLoopGroup(int, java.util.concurrent.Executor)
+                 * 方法中传递过来的 SelectorProvider.provider()
+                 *
+                 * 也就是说 Boos或者worker中的所有的Nio线程都会使用相同的 SelectorProvider，但是 SelectProvier可以创建 很多个Selector对象。
+                 * 每一个NIO线程都会有自己的Selector对象。
+                 */
                 children[i] = newChild(executor, args);
                 success = true;
             } catch (Exception e) {

@@ -155,6 +155,9 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
 
         try {
             if (ch != null) {
+                /**
+                 * 每个 新连接都会构造一个NioSocketChannel
+                 */
                 buf.add(new NioSocketChannel(this, ch));
                 return 1;
             }

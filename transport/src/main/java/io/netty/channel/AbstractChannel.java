@@ -463,6 +463,15 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
         @Override
         public final void register(EventLoop eventLoop, final ChannelPromise promise) {
+            /**
+             * register:400, AbstractChannel$AbstractUnsafe (io.netty.channel)
+             * initAndRegister:276, AbstractBootstrap (io.netty.bootstrap)
+             * doBind:234, AbstractBootstrap (io.netty.bootstrap)
+             * bind:230, AbstractBootstrap (io.netty.bootstrap)
+             * bind:205, AbstractBootstrap (io.netty.bootstrap)
+             * bind:64, EchoServer (com.phei.netty.frame.delimiter)
+             * main:84, EchoServer (com.phei.netty.frame.delimiter)
+             */
             ObjectUtil.checkNotNull(eventLoop, "eventLoop");
             if (isRegistered()) {
                 promise.setFailure(new IllegalStateException("registered to an event loop already"));
