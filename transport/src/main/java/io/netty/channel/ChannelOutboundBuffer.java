@@ -51,6 +51,7 @@ import static java.lang.Math.min;
  * </ul>
  * </p>
  */
+@SuppressWarnings("all")
 public final class ChannelOutboundBuffer {
     // Assuming a 64-bit JVM:
     //  - 16 bytes object header

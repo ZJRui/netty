@@ -75,6 +75,17 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
 
     @Override
     public EventLoop next() {
+        /**
+         * NioEventLoopgroup 通过next方法获取NioEventLoop线程，最终会调用其父类MultiThreadEventExecutorGroup的next方法。
+         * 委托父类的选择器EventExecutorChooser。具体使用那种选择器对象取决于 MultiThreadEventExecutorGroup的构造方法中
+         * 使用的策略模式。
+         * 根据线程条数是否为2的幂次来选择策略，若是，则选择器为
+         * PowerOfTwoEventExecutorChooser，其选择策略使用与运算计算下一
+         * 个选择的线程组的下标index，此计算方法在第7章中也有相似的应
+         * 用；若不是，则选择器为GenericEventExecutorChooser，其选择策略
+         * 为使用求余的方法计算下一个线程在线程组中的下标index。其中，
+         * PowerOfTwoEventExecutorChooser选择器的与运算性能会更好。
+         */
         return (EventLoop) super.next();
     }
 
@@ -83,6 +94,9 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
 
     @Override
     public ChannelFuture register(Channel channel) {
+        /**
+         * 选择一个NioEventLoop来 register这个channel
+         */
         return next().register(channel);
     }
 

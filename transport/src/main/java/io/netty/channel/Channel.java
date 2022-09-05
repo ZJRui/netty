@@ -74,6 +74,7 @@ import java.net.SocketAddress;
  * resources once you are done with the {@link Channel}. This ensures all resources are
  * released in a proper way, i.e. filehandles.
  */
+@SuppressWarnings("all")
 public interface Channel extends AttributeMap, ChannelOutboundInvoker, Comparable<Channel> {
 
     /**
@@ -207,6 +208,18 @@ public interface Channel extends AttributeMap, ChannelOutboundInvoker, Comparabl
      * </ul>
      */
     interface Unsafe {
+        /**
+         * Unsafe属性的功能非常丰富，在Abstract Channel类中有一个Unsafe抽象类
+         * ——AbstractUnsafe，其具体的实现类在AbstractChannel的子类中，
+         * AbstractUnsafe的大部分方法都采用了模板设计模式，具体的实现细
+         * 节由其子类完成
+         *
+         * Unsafe：
+         * （1）channel注册
+         * （2）端口绑定监听
+         * （3）链路连接与关闭
+         * （4）io数据的读写
+         */
 
         /**
          * Return the assigned {@link RecvByteBufAllocator.Handle} which will be used to allocate {@link ByteBuf}'s when

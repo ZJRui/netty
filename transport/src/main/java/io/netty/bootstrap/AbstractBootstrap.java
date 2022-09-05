@@ -269,6 +269,19 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     }
 
     private ChannelFuture doBind(final SocketAddress localAddress) {
+        /**
+         * 初始化Channel 并注册到 NioEventLoop线程上。
+         *
+         *
+         * 注意  initAndRegister 会将 当前的ServerSocketChannel对象注册到boss线程的 selector对象上。 这是在
+         * io.netty.channel.AbstractChannel.AbstractUnsafe#register0(io.netty.channel.ChannelPromise)的doRegister
+         * 也就是 io.netty.channel.nio.AbstractNioChannel#doRegister()方法中完成的。 但是在注册的时候 我们 并没有注册 Op_accept事件
+         *
+         *
+         *  ServerSocketChannel在注册到Selector上后为何要等到绑定端
+         * 口才设置监听OP_ACCEPT事件？提示：跟Netty的事件触发模型有关。
+         *
+         */
         final ChannelFuture regFuture = initAndRegister();
         final Channel channel = regFuture.channel();
         if (regFuture.cause() != null) {
@@ -276,13 +289,27 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         }
 
         if (regFuture.isDone()) {
+            //注册成功后需要绑定端口
+            /**
+             * 由NioEventLoop线程去异步执行，此时需要创建channelpromise对象
+             */
             // At this point we know that the registration was complete and successful.
             ChannelPromise promise = channel.newPromise();
+            /**
+             * 最终调用 AbstractChannel的bind方法
+             */
             doBind0(regFuture, channel, localAddress, promise);
             return promise;
         } else {
+            /**
+             * 由于注册操作由NioEventLoop线程去异步执行，因此可能会执行不完
+             * 此时需要返回pendingRegistrationPromise对象，即使把结果交给主线程
+             */
             // Registration future is almost always fulfilled already, but just in case it's not.
             final PendingRegistrationPromise promise = new PendingRegistrationPromise(channel);
+            /**
+             * 加上注册监听器，注册动作完成后触发
+             */
             regFuture.addListener(new ChannelFutureListener() {
                 @Override
                 public void operationComplete(ChannelFuture future) throws Exception {
@@ -292,6 +319,9 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
                         // IllegalStateException once we try to access the EventLoop of the Channel.
                         promise.setFailure(cause);
                     } else {
+                        /**
+                         * 只有注册成功后才能绑定
+                         */
                         // Registration was successful, so set the correct executor to use.
                         // See https://github.com/netty/netty/issues/2586
                         promise.registered();
@@ -305,9 +335,27 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     }
 
     final ChannelFuture initAndRegister() {
+        /**
+         *  在 AbstractBootstrap 的 initAndRegister 中 ， 通 过
+         * ReflectiveChannelFactory.newChannel() 来 反 射 创 建
+         * NioServerSocketChannel对象。
+         */
         Channel channel = null;
         try {
+            /**
+             * 根据 serverBootstrap.channel(NioServerSocketChannel.class) 反射创建 NioServerSocketChannel对象
+             *
+             */
             channel = channelFactory.newChannel();
+            /**
+             * ）初始化NioServerSocketChannel、设置属性attr和参数
+             * option，并把Handler预添加到NioServerSocketChannel的Pipeline管
+             * 道中。其中，attr是绑定在每个Channel上的上下文；option一般用来
+             * 设置一些Channel的参数；NioServerSocketChannel上的Handler除了
+             * 包括用户自定义的，还会加上ServerBootstrapAcceptor。
+             *
+             *
+             */
             init(channel);
         } catch (Throwable t) {
             if (channel != null) {
@@ -321,6 +369,28 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         }
         /**
          * main线程中执行 AbstractBootStrap的bind方法，然后 doBind--->initAndRegister--->register
+         *
+         *
+         * boos的NioEventLoop线程调用AbstractUnsafe.register0()方法，
+         * 此方法执行NioServer SocketChannel的doRegister()方法。底层调用
+         * ServerSocketChannel 的 register() 方 法 把 Channel 注 册 到 Selector
+         * 上，同时带上了附件，此附件为NioServerSocketChannel对象本身。
+         * 此处的附件attachment与第（3）步的attr很相似，在后续多路复用器
+         * 轮询到事件就绪的SelectionKey时，通过k.attachment获取。当出现
+         * 超时或链路未中断或移除时，JVM不会回收此附件。注册成功后，会调
+         * 用DefaultChannelPipeline的callHandlerAddedForAllHandlers()方
+         * 法，此方法会执行PendingHandlerCallback回调任务，回调原来在没
+         * 有注册之前添加的Handler。
+         *
+         *
+         *  注 册 成 功 后 会 触 发 ChannelFutureListener 的
+         * operationComplete()方法，此方法会带上主线程的ChannelPromise参
+         * 数 ， 然 后 调 用 AbstractChannel.bind() 方 法 ； 再 执 行
+         * NioServerSocketChannel的doBind()方法绑定端口；当绑定成功后，
+         * 会触发active事件，为注册到Selector上的ServerSocket Channel加
+         * 上监听OP_ACCEPT事件；最终运行ChannelPromise的safeSetSuccess()
+         * 方法唤醒server Bootstrap.bind(port).sync()。
+         *
          */
 
         ChannelFuture regFuture = config().group().register(channel);
@@ -331,6 +401,28 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
                 channel.unsafe().closeForcibly();
             }
         }
+        /**
+         *
+         * 这段注释比较长，主要讲述channel注册成功后的一些操作。
+         * bind或connect操作需要在register完成后 执行，此处涉及线程切换，因为ServerBootStrap运行在main线程
+         * 而register bind connect需要在nioEventLoop线程上执行。
+         * 注释翻译如下：
+         * 如果程序运行到这里，则说明Promise没有失败，可能发生以下情况：
+         * （1）如果尝试 将channel注册到EventLoop上，且此时注册已经完成，则inEventLoop返回true，channel已经注册成功 ，可以
+         * 安全调用bind或connect
+         * （2）如果尝试注册到另一个线程上，即inEventLoop返回false，则此时register请求已成功添加到事件循环的任务队列中，现在同样可以
+         * 尝试调用宾得或connect
+         *
+         * 因为register bind connect 都被绑定在同一个io线程上，所以在执行完register task 之后 bind或connect才会被执行。
+         * AbstractUnsafe#register方法中将register0 提交了eventLoop的任务队列中
+         *  eventLoop.execute(new Runnable() {
+         *                         @Override
+         *                         public void run() {
+         *                             register0(promise);
+         *                         }
+         *                     });
+         *
+         */
 
         // If we are here and the promise is not failed, it's one of the following cases:
         // 1) If we attempted registration from the event loop, the registration has been completed at this point.

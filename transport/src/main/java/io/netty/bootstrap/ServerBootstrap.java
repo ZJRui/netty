@@ -129,6 +129,13 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
 
     @Override
     void init(Channel channel) {
+        /**
+         * ）初始化NioServerSocketChannel、设置属性attr和参数
+         * option，并把Handler预添加到NioServerSocketChannel的Pipeline管
+         * 道中。其中，attr是绑定在每个Channel上的上下文；option一般用来
+         * 设置一些Channel的参数；NioServerSocketChannel上的Handler除了
+         * 包括用户自定义的，还会加上ServerBootstrapAcceptor。
+         */
         setChannelOptions(channel, newOptionsArray(), logger);
         setAttributes(channel, newAttributesArray());
 

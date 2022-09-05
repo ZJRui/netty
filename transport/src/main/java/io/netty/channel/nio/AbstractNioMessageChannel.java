@@ -32,7 +32,17 @@ import java.util.List;
 /**
  * {@link AbstractNioChannel} base class for {@link Channel}s that operate on messages.
  */
+@SuppressWarnings("all")
 public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
+    /**
+     * AbstractNioChannel拥有NIO的Channel，具备NIO的注册、连接等
+     * 功能。但I/O的读/写交给了其子类，Netty对I/O的读/写分为POJO对象
+     * 与ByteBuf和FileRegion，因此在AbstractNioChannel的基础上继续抽
+     * 象 了 一 层 ， 分 为 AbstractNioMessageChannel 与
+     * AbstractNioByteChannel
+     *
+     *AbstractNioByteChannel: 发 送 和 读 取 的 对 象 是 ByteBuf 与FileRegion类型。
+     */
     boolean inputShutdown;
 
     /**
@@ -65,6 +75,18 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
 
         @Override
         public void read() {
+            /**
+             * 在读数据时，AbstractNioMessageChannel数据不存在粘包问题，
+             * 因此AbstractNioMessageChannel在read()方法中先循环读取数据包，
+             * 再触发channelRead事件
+             *
+             * 在写数据时，AbstractNioMessageChannel数据逻辑简单。它把缓
+             * 存outboundBuffer中的数据包依次写入Channel中。如果Channel写满
+             * 了 ， 或 循 环 写 、 默 认 写 的 次 数 为 子 类 Channel 属 性 METADATA 中 的
+             * defaultMaxMessagesPerRead次数，则在Channel的SelectionKey上设
+             * 置OP_WRITE事件，随后退出，其后OP_WRITE事件处理逻辑和Byte字节
+             * 流写逻辑一样
+             */
             assert eventLoop().inEventLoop();
             final ChannelConfig config = config();
             final ChannelPipeline pipeline = pipeline();
@@ -76,6 +98,9 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
             try {
                 try {
                     do {
+                        /**
+                         * 调用子类的doReadMessages方法，读取数据包，并放入readBuf链表中，当成功读取时返回1
+                         */
                         int localRead = doReadMessages(readBuf);
                         if (localRead == 0) {
                             break;
@@ -86,17 +111,23 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
                         }
 
                         allocHandle.incMessagesRead(localRead);
-                    } while (continueReading(allocHandle));
+                    } while (continueReading(allocHandle));//不能超过16次
                 } catch (Throwable t) {
                     exception = t;
                 }
 
                 int size = readBuf.size();
+                /**
+                 *循环处理读取的数据包
+                 */
                 for (int i = 0; i < size; i ++) {
                     readPending = false;
                     pipeline.fireChannelRead(readBuf.get(i));
                 }
                 readBuf.clear();
+                /**
+                 * 记录当前读取记录，一边下次分配合理内存
+                 */
                 allocHandle.readComplete();
                 pipeline.fireChannelReadComplete();
 
@@ -139,6 +170,7 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
             }
             try {
                 boolean done = false;
+                //获取配置中循环写的最大次数
                 for (int i = config().getWriteSpinCount() - 1; i >= 0; i--) {
                     if (doWriteMessage(msg, in)) {
                         done = true;
@@ -148,6 +180,9 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
 
                 if (done) {
                     maxMessagesPerWrite--;
+                    /**
+                     * 若发送成功，则将其从缓存链表中移除。 继续发送下一个缓存节点数据
+                     */
                     in.remove();
                 } else {
                     break;
@@ -164,11 +199,13 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
         if (in.isEmpty()) {
             // Wrote all messages.
             if ((interestOps & SelectionKey.OP_WRITE) != 0) {
+                //移除op_write事件
                 key.interestOps(interestOps & ~SelectionKey.OP_WRITE);
             }
         } else {
             // Did not write all messages.
             if ((interestOps & SelectionKey.OP_WRITE) == 0) {
+                //将op——write事件添加到兴趣事件集合中
                 key.interestOps(interestOps | SelectionKey.OP_WRITE);
             }
         }

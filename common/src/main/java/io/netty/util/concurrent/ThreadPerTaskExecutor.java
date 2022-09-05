@@ -29,6 +29,22 @@ public final class ThreadPerTaskExecutor implements Executor {
 
     @Override
     public void execute(Runnable command) {
+        /**
+         * 这个线程池的实现的任务调度很特殊，对每一个提交进来的任务 他都会创建一个新的线程 来执行这个任务。
+         *
+         * NioEventLoop对象 中通过父类SingleThreadEventExecutor的executor属性持有一个  ThreadPerTaskExecutor 对象
+         *
+         * 然后在SingleEvent Executor的 doStartThread 方法中 会使用 ThreadPerTaskExecutor线程池的execute方法来执行一个任务。
+         * 这个任务的逻辑 就是 处理NioEventLoop对象的任务队列中的任务。
+         *
+         *  ThreadPerTaskExecutor对提交任务的调度就是启动新的线程 来执行任务。
+         *
+         *
+         *
+         *  2. 这里的newThread最终会创建
+         *   new FastThreadLocalThread(threadGroup, r, name);
+         *    Netty 的 NioEventLoop 线 程 被 包 装 成 了FastThreadLocalThread线程，
+         */
         threadFactory.newThread(command).start();
     }
 }

@@ -23,6 +23,7 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 /**
  * A special {@link Thread} that provides fast access to {@link FastThreadLocal} variables.
  */
+@SuppressWarnings("all")
 public class FastThreadLocalThread extends Thread {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(FastThreadLocalThread.class);

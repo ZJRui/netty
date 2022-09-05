@@ -80,6 +80,27 @@ public abstract class SingleThreadEventLoop extends SingleThreadEventExecutor im
 
     @Override
     public ChannelFuture register(Channel channel) {
+        /**
+         * 注册方法register()在两个地方被调用：一是在端口绑定前，需
+         * 要把NioServerSocketChannel注册到Boss线程的Selector上；二是当
+         * NioEventLoop监听到有链路接入时，把链路SocketChannel包装成
+         * NioSocketChannel ， 并 注 册 到 Woker 线 程 中 。 最 终 调 用
+         * NioSocketChannel的辅助对象unsafe的register()方法，unsafe执行
+         * 父类AbstractUnsafe的register()模板方法（
+         *
+         *
+         * ）NioEventLoop线程调用AbstractUnsafe.register0()方法，
+         * 此方法执行NioServer SocketChannel的doRegister()方法。底层调用
+         * ServerSocketChannel 的 register() 方 法 把 Channel 注 册 到 Selector
+         * 上，同时带上了附件，此附件为NioServerSocketChannel对象本身。
+         * 此处的附件attachment与第（3）步的attr很相似，在后续多路复用器
+         * 轮询到事件就绪的SelectionKey时，通过k.attachment获取。当出现
+         * 超时或链路未中断或移除时，JVM不会回收此附件。注册成功后，会调
+         * 用DefaultChannelPipeline的callHandlerAddedForAllHandlers()方
+         * 法，此方法会执行PendingHandlerCallback回调任务，回调原来在没
+         * 有注册之前添加的Handler。
+         *
+         */
         return register(new DefaultChannelPromise(channel, this));
     }
 

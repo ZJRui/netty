@@ -40,19 +40,37 @@ import java.util.concurrent.RejectedExecutionException;
 /**
  * A skeletal {@link Channel} implementation.
  */
+@SuppressWarnings("all")
 public abstract class AbstractChannel extends DefaultAttributeMap implements Channel {
 
+    /**
+     * AbstractChannel抽象类包含以下几个重要属性。
+     * • EventLoop：每个Channel对应一条EventLoop线程。
+     * • DefaultChannelPipeline：一个Handler的容器，也可以将其理解为一个Handler链。Handler主要处理数据的编/解码和业务逻辑。
+     * • Unsafe：实现具体的连接与读/写数据，如网络的读/写、链路关闭、发起连接等。命名为Unsafe表示不对外提供使用，并非不安全。
+     *
+     *
+     */
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(AbstractChannel.class);
 
     private final Channel parent;
     private final ChannelId id;
+    /**
+     * Unsafe：实现具体的连接与读/写数据，如网络的读/写、链路关闭、发起连接等。命名为Unsafe表示不对外提供使用，并非不安全。
+     */
     private final Unsafe unsafe;
+    /**
+     * 一个Handler的容器，也可以将其理解为一个Handler链。Handler主要处理数据的编/解码和业务逻辑。
+     */
     private final DefaultChannelPipeline pipeline;
     private final VoidChannelPromise unsafeVoidPromise = new VoidChannelPromise(this, false);
     private final CloseFuture closeFuture = new CloseFuture(this);
 
     private volatile SocketAddress localAddress;
     private volatile SocketAddress remoteAddress;
+    /**
+     * 每个channel对应一条EventLoop线程，比如NioEventLoop
+     */
     private volatile EventLoop eventLoop;
     private volatile boolean registered;
     private boolean closeInitiated;
@@ -221,6 +239,15 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
     @Override
     public ChannelFuture bind(SocketAddress localAddress) {
+        /**
+         *  注 册 成 功 后 会 触 发 ChannelFutureListener 的
+         * operationComplete()方法，此方法会带上主线程的ChannelPromise参
+         * 数 ， 然 后 调 用 AbstractChannel.bind() 方 法 ； 再 执 行
+         * NioServerSocketChannel的doBind()方法绑定端口；当绑定成功后，
+         * 会触发active事件，为注册到Selector上的ServerSocket Channel加
+         * 上监听OP_ACCEPT事件；最终运行ChannelPromise的safeSetSuccess()
+         * 方法唤醒server Bootstrap.bind(port).sync()。
+         */
         return pipeline.bind(localAddress);
     }
 
@@ -428,6 +455,19 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
      */
     protected abstract class AbstractUnsafe implements Unsafe {
 
+        /**
+         *  在 AbstractNioChannel 中 有 个 非 常 重 要 的 类 ——
+         * AbstractNioUnsafe，是AbstractUnsafe类的NIO实现，主要实现了
+         * connect()、flush0()等方法。它还实现了NioUnsafe接口，实现了其
+         * finishConnect()、forceFlush()、ch()等方法。其中，forceFlush()
+         * 与flush0()最终调用的NioSocketChannel的doWrite()方法来完成缓存
+         * 数据写入Socket的工作，在剖析NioSocketChannel时会详细讲解。
+         * connect()和finishConnect()这两个方法只有在Netty客户端中才会使
+         * 用到。
+         *
+         *
+         *
+         */
         private volatile ChannelOutboundBuffer outboundBuffer = new ChannelOutboundBuffer(AbstractChannel.this);
         private RecvByteBufAllocator.Handle recvHandle;
         private boolean inFlush0;
@@ -514,6 +554,32 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                     return;
                 }
                 boolean firstRegistration = neverRegistered;
+                /**
+                 *1.boss的 NioEventLoop线程调用AbstractUnsafe.register0()方法，
+                 * 此方法执行NioServer SocketChannel的doRegister()方法。底层调用
+                 * ServerSocketChannel 的 register() 方 法 把 Channel 注 册 到 Selector
+                 * 上，同时带上了附件，此附件为NioServerSocketChannel对象本身。
+                 * 此处的附件attachment与第（3）步的attr很相似，在后续多路复用器
+                 * 轮询到事件就绪的SelectionKey时，通过k.attachment获取。当出现
+                 * 超时或链路未中断或移除时，JVM不会回收此附件。注册成功后，会调
+                 * 用DefaultChannelPipeline的callHandlerAddedForAllHandlers()方
+                 * 法，此方法会执行PendingHandlerCallback回调任务，回调原来在没
+                 * 有注册之前添加的Handler。
+                 *
+                 * 具体触发register是再 io.netty.bootstrap.AbstractBootstrap#initAndRegister() 方法中
+                 * 执行  ChannelFuture regFuture = config().group().register(channel);
+                 *
+                 * 2， 注 册 成 功 后 会 触 发 ChannelFutureListener 的
+                 * operationComplete()方法，此方法会带上主线程的ChannelPromise参
+                 * 数 ， 然 后 调 用 AbstractChannel.bind() 方 法 ； 再 执 行
+                 * NioServerSocketChannel的doBind()方法绑定端口；当绑定成功后，
+                 * 会触发active事件，为注册到Selector上的ServerSocket Channel加
+                 * 上监听OP_ACCEPT事件；最终运行ChannelPromise的safeSetSuccess()
+                 * 方法唤醒server Bootstrap.bind(port).sync()。
+                 *
+                 *
+                 *
+                 */
                 doRegister();
                 neverRegistered = false;
                 registered = true;
@@ -528,12 +594,29 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 // multiple channel actives if the channel is deregistered and re-registered.
                 if (isActive()) {
                     if (firstRegistration) {
+                        /**
+                         * 注 册 成 功 后 会 触 发 ChannelFutureListener 的
+                         * operationComplete()方法，此方法会带上主线程的ChannelPromise参
+                         * 数 ， 然 后 调 用 AbstractChannel.bind() 方 法 ； 再 执 行
+                         * NioServerSocketChannel的doBind()方法绑定端口；当绑定成功后，
+                         * 会触发active事件，为注册到Selector上的ServerSocket Channel加
+                         * 上监听OP_ACCEPT事件；最终运行ChannelPromise的safeSetSuccess()
+                         * 方法唤醒server Bootstrap.bind(port).sync()。
+                         *
+                         *
+                         * 注意这里的 active会触发 当前的ServerSocketChannel 在selector对象上注册 Op_accept事件
+                         */
                         pipeline.fireChannelActive();
                     } else if (config().isAutoRead()) {
                         // This channel was registered before and autoRead() is set. This means we need to begin read
                         // again so that we process inbound data.
                         //
                         // See https://github.com/netty/netty/issues/4805
+                        /**
+                         *
+                         *在 register0的   beginRead()--->io.netty.channel.nio.AbstractNioMessageChannel#doBeginRead()-->
+                         * io.netty.channel.nio.AbstractNioChannel#doBeginRead()  这个方法中 才将 NioServerSocketChannel的readInterestOp 注册到 Selector
+                         */
                         beginRead();
                     }
                 }
@@ -568,13 +651,16 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
             boolean wasActive = isActive();
             try {
+                // 模板设计模式，调用子类NioServerSocketChannel的doBind方法
                 doBind(localAddress);
             } catch (Throwable t) {
                 safeSetFailure(promise, t);
                 closeIfClosed();
                 return;
             }
-
+            /**
+             * 从非活跃状态到活跃状态触发了active事件
+             */
             if (!wasActive && isActive()) {
                 invokeLater(new Runnable() {
                     @Override
@@ -937,6 +1023,15 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             }
 
             try {
+                /**
+                 * doWrite 主要是从channelOutboundBuffer缓存中获取待发送的数据，进行循环发送，发送的结果分为三种：
+                 * （1）发送成功 跳出循环 直接返回
+                 * （2）由于TCP缓存区已满，成功发送的字节数为0，跳出循环，并
+                 * 将写操作OP_WRITE事件添加到选择Key兴趣事件集中。
+                 * （3）默认当写了16次数据还未发送完时，把选择Key的OP_WRITE
+                 * 事件从兴趣事件集中移除，并添加一个flushTask任务，先去执行其他
+                 * 任务，当检测到此任务时再发送
+                 */
                 doWrite(outboundBuffer);
             } catch (Throwable t) {
                 handleWriteError(t);

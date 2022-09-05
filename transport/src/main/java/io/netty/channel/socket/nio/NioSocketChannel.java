@@ -56,7 +56,16 @@ import static io.netty.channel.internal.ChannelUtils.MAX_BYTES_PER_GATHERING_WRI
 /**
  * {@link io.netty.channel.socket.SocketChannel} which uses NIO selector based implementation.
  */
+@SuppressWarnings("all")
 public class NioSocketChannel extends AbstractNioByteChannel implements io.netty.channel.socket.SocketChannel {
+    /**
+     *  NioSocketChannel 是
+     * AbstractNioByteChannel 的 子 类 ， 也 是
+     * io.netty.channel.socket.SocketChannel的实现类。Netty服务的每
+     * 个 Socket 连 接 都 会 生 成 一 个 NioSocketChannel 对 象 (准确说 每个NioSocketChannel（netty的结构） 都有一个JDk的 socketChannel与之对应，
+     * 这个jdk的socketchannel是在NioSocketChannel的构造器中 通过newChannel方法创建的)
+     *
+     */
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(NioSocketChannel.class);
     private static final SelectorProvider DEFAULT_SELECTOR_PROVIDER = SelectorProvider.provider();
 
@@ -67,6 +76,15 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
 
     private static SocketChannel newChannel(SelectorProvider provider, InternetProtocolFamily family) {
         try {
+            /**
+             *
+             * NioSocketChannel是Netty的channel结构， 他的构造器中会通过 newChannel方法创建JDK 的socketChannel结构
+             *
+             * JDK的SocketChannel 在 NioSocketChannel 构 造 方 法 中 由
+             * SelectorProvider.provider().openSocket  Channel() 创 建 ， 提 供
+             * javaChannel()方法以获取SocketChannel。
+             *
+             */
             SocketChannel channel = SelectorProviderUtil.newChannel(OPEN_SOCKET_CHANNEL_WITH_FAMILY, provider, family);
             return channel == null ? provider.openSocketChannel() : channel;
         } catch (IOException e) {
@@ -78,6 +96,34 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
      * Create a new instance
      */
     public NioSocketChannel() {
+        /**
+         * NioSocketChannel  的构造器一般不是 通过 new的方式来创建对象，而是在 配置的时候指
+         * 定 使用NioSocketChannel这个类： .channel(NioSocketChannel.class)
+         *
+         *      Bootstrap b = new Bootstrap();
+         *             b.group(group)
+         *                     .channel(NioSocketChannel.class)
+         *                     .handler(new ChannelInitializer<SocketChannel>() {
+         *                         @Override
+         *                         protected void initChannel(SocketChannel ch) {
+         *                             ChannelPipeline p = ch.pipeline();
+         *                             p.addLast(sslContext.newHandler(ch.alloc(), DNS_SERVER_HOST, DNS_SERVER_PORT))
+         *                                     .addLast(new TcpDnsQueryEncoder())
+         *                                     .addLast(new TcpDnsResponseDecoder())
+         *                                     .addLast(new SimpleChannelInboundHandler<DefaultDnsResponse>() {
+         *                                         @Override
+         *                                         protected void channelRead0(ChannelHandlerContext ctx, DefaultDnsResponse msg) {
+         *                                             try {
+         *                                                 handleQueryResp(msg);
+         *                                             } finally {
+         *                                                 ctx.close();
+         *                                             }
+         *                                         }
+         *                                     });
+         *                         }
+         *                     });
+         *             final Channel ch = b.connect(DNS_SERVER_HOST, DNS_SERVER_PORT).sync().channel();
+         */
         this(DEFAULT_SELECTOR_PROVIDER);
     }
 
@@ -92,6 +138,21 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
      * Create a new instance using the given {@link SelectorProvider} and protocol family (supported only since JDK 15).
      */
     public NioSocketChannel(SelectorProvider provider, InternetProtocolFamily family) {
+        /**
+         * 注意 这个地方的newChannel
+         *
+         * Netty中的channe 是 AbstractNioChannel.
+         * AbstractNioChannel 中有一个 SelectableChannel ch; 属性
+         *
+         * SelectableChannel 是 java.nio.SocketChannel 和
+         * java.nio.ServerSocketChannel公共的抽象类；
+         *
+         *在AbstractNioChannel中，已经将Netty的Channel和Java
+         * NIO的Channel关联起来了。
+         *
+         * 在这里的newChannel就是 创建一个SocketChannel，  而这个SocketChannel 也就是 SelectableChannel。
+         *
+         */
         this(newChannel(provider, family));
     }
 
@@ -352,14 +413,27 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
 
     @Override
     protected int doReadBytes(ByteBuf byteBuf) throws Exception {
+        /**
+         * 从当前NioSocketChannel对象 对应的  jdk 的SocketChannel 中读取数据
+         *
+         * 获取计算内存分配器Handle
+         */
         final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
+        //设置尝试读取字节数为buf的可读字节数
         allocHandle.attemptedBytesRead(byteBuf.writableBytes());
+        //从channel中读取字节并写入buf中，返回读取的字节数
         return byteBuf.writeBytes(javaChannel(), allocHandle.attemptedBytesRead());
     }
 
     @Override
     protected int doWriteBytes(ByteBuf buf) throws Exception {
+        /**
+         * 获取buf的可读字节数
+         */
         final int expectedWrittenBytes = buf.readableBytes();
+        /**
+         * 把buf写入socket缓冲区，返回写入的字节数。
+         */
         return buf.readBytes(javaChannel(), expectedWrittenBytes);
     }
 
@@ -384,41 +458,78 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
 
     @Override
     protected void doWrite(ChannelOutboundBuffer in) throws Exception {
+        /**
+         *  重写doWrite()方法、实现doWriteBytes()方法，将数据写入
+         * JDK的socketChannel中。
+         */
         SocketChannel ch = javaChannel();
+        //循环写的最大次数
         int writeSpinCount = config().getWriteSpinCount();
         do {
+            /**
+             * 缓存中数据为空，无数据可写
+             */
             if (in.isEmpty()) {
                 // All written so clear OP_WRITE
+                //移除写事件，并直接返回
                 clearOpWrite();
                 // Directly return here so incompleteWrite(...) is not called.
                 return;
             }
-
+            //获取一次最大的可写字节数
             // Ensure the pending writes are made of ByteBufs only.
             int maxBytesPerGatheringWrite = ((NioSocketChannelConfig) config).getMaxBytesPerGatheringWrite();
+            /**
+             * 缓存由多个Entry组成，每次写时都可能写多个Entry，具体一次性该发送多少数据 由ByteBuffer数组的最大长度和一次最大可写字节数决定。
+             *
+             */
             ByteBuffer[] nioBuffers = in.nioBuffers(1024, maxBytesPerGatheringWrite);
             int nioBufferCnt = in.nioBufferCount();
 
             // Always use nioBuffers() to workaround data-corruption.
             // See https://github.com/netty/netty/issues/2761
-            switch (nioBufferCnt) {
+            switch (nioBufferCnt) { //缓存中由多少个nioBuffer
                 case 0:
+                    /**
+                     * 非byteBuffer数据，交给父类实现
+                     */
                     // We have something else beside ByteBuffers to write so fallback to normal writes.
                     writeSpinCount -= doWrite0(in);
                     break;
                 case 1: {
+                    /**
+                     *
+                     */
                     // Only one ByteBuf so use non-gathering write
                     // Zero length buffers are not added to nioBuffers by ChannelOutboundBuffer, so there is no need
                     // to check if the total size of all the buffers is non-zero.
                     ByteBuffer buffer = nioBuffers[0];
                     int attemptedBytes = buffer.remaining();
+                    /**
+                     * 数据写入 JDK的 SocketChannel
+                     */
                     final int localWrittenBytes = ch.write(buffer);
                     if (localWrittenBytes <= 0) {
+                        /**
+                         * 小于=0表示发送失败， 将写事件添加到事件兴趣集合中。
+                         */
                         incompleteWrite(true);
                         return;
                     }
+                    /**
+                     * 根据成功写入字节数和尝试写入字节数调整下次最大可写入字节数。
+                     * 当两者相等时，若尝试写入字节数*2大于当前最大写入字节数 则下次最大可写字节数=尝试写入字节数*2
+                     *
+                     * 当两者不等时，成功写入字节数小于尝试写入字节数/2， 且尝试写入字节数大于4096时 下次最大可写字节数等于尝试写入字节数/2
+                     */
                     adjustMaxBytesPerGatheringWrite(attemptedBytes, localWrittenBytes, maxBytesPerGatheringWrite);
+                    /**
+                     * 从缓存中移除写入字节数
+                     */
                     in.removeBytes(localWrittenBytes);
+                    /**
+                     * 循环写次数-1
+                     */
                     --writeSpinCount;
                     break;
                 }
@@ -442,6 +553,11 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
             }
         } while (writeSpinCount > 0);
 
+        /**
+         * 未全部发送完：
+         * 如果writeSpinCount<0 则说明socket缓冲区已经满了，未发送成功。
+         * 若writeSpinCount=0 则说明Netty缓存数据太大，写了16次还未写完
+         */
         incompleteWrite(writeSpinCount < 0);
     }
 

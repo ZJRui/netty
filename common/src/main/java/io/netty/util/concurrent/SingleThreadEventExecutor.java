@@ -48,6 +48,7 @@ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
  * Abstract base class for {@link OrderedEventExecutor}'s that execute all its submitted tasks in a single thread.
  *
  */
+@SuppressWarnings("all")
 public abstract class SingleThreadEventExecutor extends AbstractScheduledEventExecutor implements OrderedEventExecutor {
 
     static final int DEFAULT_MAX_PENDING_EXECUTOR_TASKS = Math.max(16,
@@ -366,11 +367,25 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
      * @return {@code true} if and only if at least one task was run
      */
     protected boolean runAllTasks() {
+        /**
+         * 执行taskQueue队列和定时任务队列中的任务， 如心跳检测、异步写操作等。
+         * 首先NioEventLoop会根据ioRatio（I/O事件与taskQueue运行的时间占比）计算任务执行
+         * 时 长 。 由 于 一 个 NioEventLoop 线 程 需 要 管 理 很 多 Channel ， 这 些
+         * Channel的任务可能非常多，若要都执行完，则I/O事件可能得不到及
+         * 时处理，因此每执行64个任务后就会检测执行任务的时间是否已用
+         * 完，如果执行任务的时间用完了，就不再执行后续的任务了
+         *
+         *
+         */
         assert inEventLoop();
         boolean fetchedAll;
         boolean ranAtLeastOne = false;
 
         do {
+            /**
+             * 从定时任务队列中加你个达到执行时间的task丢到taskQueue队列中。
+             *
+             */
             fetchedAll = fetchFromScheduledTaskQueue();
             if (runAllTasksFrom(taskQueue)) {
                 ranAtLeastOne = true;
@@ -456,21 +471,47 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
      * the tasks in the task queue and returns if it ran longer than {@code timeoutNanos}.
      */
     protected boolean runAllTasks(long timeoutNanos) {
+        /**
+         * ，runAllTasks：主要目的是执行taskQueue队列和定时
+         * 任务队列中的任务，如心跳检测、异步写操作等
+         * 首先NioEventLoop会根据ioRatio（I/O事件与taskQueue运行的时间占比）计算任务执行
+         * 时 长 。 由 于 一 个 NioEventLoop 线 程 需 要 管 理 很 多 Channel ， 这 些
+         * Channel的任务可能非常多，若要都执行完，则I/O事件可能得不到及
+         * 时处理，因此每执行64个任务后就会检测执行任务的时间是否已用
+         * 完，如果执行任务的时间用完了，就不再执行后续的任务了
+         *
+         * 参数 timeoutNanos 就是根据ioRatio 计算出来的
+         *
+         */
+        //从定时任务队列中将达到执行时间的task丢到taskqueue队列中
         fetchFromScheduledTaskQueue();
+        /**
+         * 从 taskQueue队列中获取task
+         */
         Runnable task = pollTask();
         if (task == null) {
+            /**
+             * 执行tailTasks中的task 做收尾工作
+             */
             afterRunningAllTasks();
             return false;
         }
 
+        /**
+         * 获取执行截至时间
+         */
         final long deadline = timeoutNanos > 0 ? getCurrentTimeNanos() + timeoutNanos : 0;
-        long runTasks = 0;
+        long runTasks = 0;//执行任务个数
         long lastExecutionTime;
         for (;;) {
+            //运行task的run方法
             safeExecute(task);
 
             runTasks ++;
 
+            /**
+             * 每执行64个任务就进行一次是否到达截至时间的检查
+             */
             // Check timeout every 64 tasks because nanoTime() is relatively expensive.
             // XXX: Hard-coded value - will make it configurable if it is really a problem.
             if ((runTasks & 0x3F) == 0) {
@@ -479,14 +520,18 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
                     break;
                 }
             }
-
+            /**
+             * 再从taskQueue中取出task
+             */
             task = pollTask();
             if (task == null) {
+                //如果没有task了，则更新最后执行时间并跳出循环
                 lastExecutionTime = getCurrentTimeNanos();
                 break;
             }
         }
 
+        //收尾工作
         afterRunningAllTasks();
         this.lastExecutionTime = lastExecutionTime;
         return true;
@@ -986,6 +1031,8 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         executor.execute(new Runnable() {
             @Override
             public void run() {
+                //记录 执行任务的线程。 这个线程  执行下面的 SingleThreadEventExecutor.this.run
+                //也就是执行NioEventLoop的run，run方法中会死循环消费NioEventLoop对象的任务队列
                 thread = Thread.currentThread();
                 if (interrupted) {
                     thread.interrupt();

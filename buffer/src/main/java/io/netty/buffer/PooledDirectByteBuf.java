@@ -108,7 +108,11 @@ final class PooledDirectByteBuf extends PooledByteBuf<ByteBuffer> {
 
     @Override
     public ByteBuf getBytes(int index, ByteBuf dst, int dstIndex, int length) {
+
         checkDstIndex(index, length, dstIndex, dst.capacity());
+        /**
+         * 将NIO的Byte Buffer中的内容获取到dst数组中
+         */
         if (dst.hasArray()) {
             getBytes(index, dst.array(), dst.arrayOffset() + dstIndex, length);
         } else if (dst.nioBufferCount() > 0) {
@@ -126,6 +130,9 @@ final class PooledDirectByteBuf extends PooledByteBuf<ByteBuffer> {
     @Override
     public ByteBuf getBytes(int index, byte[] dst, int dstIndex, int length) {
         checkDstIndex(index, length, dstIndex, dst.length);
+        /**
+         * 将NIO的Byte Buffer中的内容获取到dst数组中
+         */
         _internalNioBuffer(index, length, true).get(dst, dstIndex, length);
         return this;
     }

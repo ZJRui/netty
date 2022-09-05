@@ -24,8 +24,24 @@ import io.netty.util.ReferenceCounted;
 
 /**
  * Common logic for {@link ReferenceCounted} implementations
- */
+ */@SuppressWarnings("all")
 public abstract class ReferenceCountUpdater<T extends ReferenceCounted> {
+    /**
+     *
+     * ReferenceCountUpdater 是 AbstractReferenceCountedByteBuf 的
+     * 辅助类，用于完成对引用计数值的具体操作.
+     *
+     * 虽然它的所有功能基本上都与引用计数有关，但与Netty之前的版本相比
+     * 有很大的改动，主要是Netty v4.1.38.Final版本采用了乐观锁方式来
+     * 修改refCnt，并在修改后进行校验。例如，retain()方法在增加了
+     * refCnt后，如果出现了溢出，则回滚并抛异常。在旧版本中，采用的
+     * 是原子性操作，不断地提前判断，并尝试调用compareAndSet。与之相
+     * 比，新版本的吞吐量有所提高，但若还是采用refCnt的原有方式，从1
+     * 开始每次加1或减1，则会引发一些问题，需要重新设计。这也是新版
+     * 本改动较大的主要原因。
+     *
+     *
+     */
     /*
      * Implementation notes:
      *

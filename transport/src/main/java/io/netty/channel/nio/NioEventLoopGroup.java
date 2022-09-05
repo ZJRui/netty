@@ -36,6 +36,12 @@ import java.util.concurrent.ThreadFactory;
  * {@link MultithreadEventLoopGroup} implementations which is used for NIO {@link Selector} based {@link Channel}s.
  */
 public class NioEventLoopGroup extends MultithreadEventLoopGroup {
+    /**
+     * NioEventLoopGroup 的构造器主要完成3件事情
+     * （1）创建一定数量的NioEventLoop线程组并初始化
+     * （2）创建线程选择器chooser。当获取线程时 通过选择器来获取
+     * （3）创建线程工厂并构造线程执行器
+     */
 
     /**
      * Create a new instance using the default number of threads, the default {@link ThreadFactory} and
@@ -182,6 +188,8 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
         /**
          * 这里将 SelectorProvider对象交给了NioEvenetLoop ， NioEventLoop对象的构造器中会使用SelectorProvier 来创建 Selector对象
          * 不同的NioEventLoop 会有不同的Selector对象
+         *
+         *
          */
         return new NioEventLoop(this, executor, selectorProvider,
                 selectStrategyFactory.newSelectStrategy(),

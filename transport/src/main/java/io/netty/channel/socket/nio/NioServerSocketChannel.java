@@ -45,9 +45,20 @@ import java.util.Map;
  * A {@link io.netty.channel.socket.ServerSocketChannel} implementation which uses
  * NIO selector based implementation to accept new connections.
  */
+@SuppressWarnings("all")
 public class NioServerSocketChannel extends AbstractNioMessageChannel
                              implements io.netty.channel.socket.ServerSocketChannel {
 
+    /**
+     * NioServerSocketChannel是AbstractNioMessageChannel的子类，
+     * 由于NioServerSocketChannel由服务端使用，并且只负责监听Socket
+     * 的接入，不关心I/O的读/写，所以与NioSocketChannel相比要简单很
+     * 多。它封装了NIO中的ServerSocketChannel，并通过newSocket()方法
+     * 打 开 ServerSocket  Channel
+     *
+     * 重点关注它是如何监听新加入的连接的（需要由
+     * doReadMessages()方法来完成）
+     */
     private static final ChannelMetadata METADATA = new ChannelMetadata(false, 16);
     private static final SelectorProvider DEFAULT_SELECTOR_PROVIDER = SelectorProvider.provider();
 
@@ -72,6 +83,16 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
      * Create a new instance
      */
     public NioServerSocketChannel() {
+        /**
+         *
+         * NioServerSocketChannel 不会被直接new 而是通过反射来创建 ，我们一般只会指定使用的时NioServerSocketChannel 还是NioSocketChanne
+         *      ServerBootstrap b = new ServerBootstrap();
+         *             b.group(bossGroup, workerGroup)
+         *              .channel(NioServerSocketChannel.class)
+         *              .option(ChannelOption.SO_BACKLOG, 100)
+         *              .handler(new LoggingHandler(LogLevel.INFO))
+         *
+         */
         this(DEFAULT_SELECTOR_PROVIDER);
     }
 
@@ -93,6 +114,26 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
      * Create a new instance using the given {@link ServerSocketChannel}.
      */
     public NioServerSocketChannel(ServerSocketChannel channel) {
+        /**
+         *
+         * 注意 NioServerSocketChannel  的构造器中 自己 指定了 自己 只对Op_accept
+         * 事件感兴趣，这个 参数op_accept 被复制给 属性  readInterestOp
+         *
+         * 然后在  io.netty.bootstrap.AbstractBootstrap#initAndRegister()
+         * 方法中 会触发   ChannelFuture regFuture = config().group().register(channel);
+         * 也就是 JDK的 ServerSocketChannel注册到 selector对象上，
+         * 最终这个 注册 会执行 io.netty.channel.AbstractChannel.AbstractUnsafe#register0
+         *
+         * 在unsafe的register0 的doRegister 中 注册的时候 并没有 将 NioServerSocketChannel的 readInterestOp 设置到Selector对象上。
+         *
+         * 而是在 register0的   beginRead()--->io.netty.channel.nio.AbstractNioMessageChannel#doBeginRead()-->
+         * io.netty.channel.nio.AbstractNioChannel#doBeginRead()  这个方法中 才将 NioServerSocketChannel的readInterestOp 注册到 Selector
+         *
+         *
+         *
+         * 问题：  ServerSocketChannel在注册到Selector上后为何要等到绑定端口才设置监听OP_ACCEPT事件？提示：跟Netty的事件触发模型有关。（Netty源码剖析与应用）
+         *
+         */
         super(null, channel, SelectionKey.OP_ACCEPT);
         config = new NioServerSocketChannelConfig(this, javaChannel().socket());
     }
@@ -151,6 +192,11 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
 
     @Override
     protected int doReadMessages(List<Object> buf) throws Exception {
+        /**
+         * 重点关注它是如何监听新加入的连接的（需要由
+         * doReadMessages()方法来完成）
+         */
+        //调用ServerSocketChannel的accept方法监听新加入的连接
         SocketChannel ch = SocketUtils.accept(javaChannel());
 
         try {
