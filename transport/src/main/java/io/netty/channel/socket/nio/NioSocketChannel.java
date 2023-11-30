@@ -67,6 +67,34 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
      *
      */
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(NioSocketChannel.class);
+
+    /**
+     * 1.可以看到默认情况下，SelectorProvider有三种创建方式。
+     * 第一种就是从系统属性中查找：java.nio.channels.spi.SelectorProvider：
+     *
+     * String cn = System.getProperty("java.nio.channels.spi.SelectorProvider");
+     * Class<?> c = Class.forName(cn, true,
+     *                                        ClassLoader.getSystemClassLoader());
+     *             provider = (SelectorProvider)c.newInstance();
+     *
+     *2.如果没有的话，则会从"META-INF/services/"中加载service Loader :
+     *  private static boolean loadProviderAsService() {
+     *
+     *         ServiceLoader<SelectorProvider> sl =
+     *             ServiceLoader.load(SelectorProvider.class,
+     *                                ClassLoader.getSystemClassLoader());
+     *         Iterator<SelectorProvider> i = sl.iterator();
+     *
+     *3.如果servie也没有找到的话，则会使用最后默认的sun.nio.ch.DefaultSelectorProvider.
+     *
+     *
+     *
+     * 默认情况下，我们使用的是NioServerSocketChannel。他实际是从上面提到的默认的SelectorProvider来创建的。
+     *
+     * private static final SelectorProvider DEFAULT_SELECTOR_PROVIDER = SelectorProvider.provider();
+     * return DEFAULT_SELECTOR_PROVIDER.openServerSocketChannel();
+     * 所以使用的channel需要跟selector相匹配。
+     */
     private static final SelectorProvider DEFAULT_SELECTOR_PROVIDER = SelectorProvider.provider();
 
     private static final Method OPEN_SOCKET_CHANNEL_WITH_FAMILY =
@@ -420,6 +448,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
          */
         final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
         //设置尝试读取字节数为buf的可读字节数
+        //获取一下分配到的累积缓存区可写的字节数（byteBuf.writableBytes()）， 这个后面有妙用 。
         allocHandle.attemptedBytesRead(byteBuf.writableBytes());
         //从channel中读取字节并写入buf中，返回读取的字节数
         return byteBuf.writeBytes(javaChannel(), allocHandle.attemptedBytesRead());

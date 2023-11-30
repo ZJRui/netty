@@ -171,6 +171,7 @@ public abstract class MultithreadEventExecutorGroup extends AbstractEventExecuto
 
         /**
          * 根据线程数创建选择器，选择器主要适用于next方法
+         *         // 创建EventExecutor选择器
          */
         chooser = chooserFactory.newChooser(children);
 

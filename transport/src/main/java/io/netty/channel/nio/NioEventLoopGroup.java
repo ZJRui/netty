@@ -37,10 +37,13 @@ import java.util.concurrent.ThreadFactory;
  */
 public class NioEventLoopGroup extends MultithreadEventLoopGroup {
     /**
-     * NioEventLoopGroup 的构造器主要完成3件事情
+     *1. NioEventLoopGroup 的构造器主要完成3件事情
      * （1）创建一定数量的NioEventLoop线程组并初始化
      * （2）创建线程选择器chooser。当获取线程时 通过选择器来获取
      * （3）创建线程工厂并构造线程执行器
+     *
+     * 2.NioEventLoopGroup继承自 MultithreadEventLoopGroup 多提供了两个方法setIoRatio和rebuildSelectors，
+     * 一个用于设置NioEventLoop用于IO处理的时间占比，另一个是重新构建Selectors，来处理epoll空轮询导致CPU100%的bug
      */
 
     /**
@@ -172,6 +175,15 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
 
     @Override
     protected EventLoop newChild(Executor executor, Object... args) throws Exception {
+        /**
+         * 比如上面我们常用的NioEventLoopGroup，就是一个单线程的EventLoop。
+         *
+         * NioEventLoopGroup通常我们使用的是无参的构造函数，实际上NioEventLoopGroup可以传入ThreadFactory,thread的个数，SelectorProvider和SelectStrategyFactory.
+         *
+         * netty只提供了一个SelectStrategyFactory的实现：DefaultSelectStrategyFactory。
+         *
+         * 而对应SelectorProvider来说，默认的实现是SelectorProvider.provider(),
+         */
         SelectorProvider selectorProvider = (SelectorProvider) args[0];
         SelectStrategyFactory selectStrategyFactory = (SelectStrategyFactory) args[1];
         RejectedExecutionHandler rejectedExecutionHandler = (RejectedExecutionHandler) args[2];

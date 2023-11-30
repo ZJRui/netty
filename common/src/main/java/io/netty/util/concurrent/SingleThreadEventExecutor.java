@@ -472,7 +472,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
      */
     protected boolean runAllTasks(long timeoutNanos) {
         /**
-         * ，runAllTasks：主要目的是执行taskQueue队列和定时
+         * 1.runAllTasks：主要目的是执行taskQueue队列和定时
          * 任务队列中的任务，如心跳检测、异步写操作等
          * 首先NioEventLoop会根据ioRatio（I/O事件与taskQueue运行的时间占比）计算任务执行
          * 时 长 。 由 于 一 个 NioEventLoop 线 程 需 要 管 理 很 多 Channel ， 这 些
@@ -481,6 +481,12 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
          * 完，如果执行任务的时间用完了，就不再执行后续的任务了
          *
          * 参数 timeoutNanos 就是根据ioRatio 计算出来的
+         *
+         * 2.首先从定时任务消息队列中弹出消息进行处理，如果消息队列为
+         * 空，则退出循环。根据当前的时间戳进行判断，如果该定时任务已经
+         * 或者正处于超时状态，则将其加入到执行Task Queue中，同时从延时
+         * 队列中删除。定时任务如果没有超时，说明本轮循环不需要处理，直
+         * 接退出即可，
          *
          */
         //从定时任务队列中将达到执行时间的task丢到taskqueue队列中
@@ -505,12 +511,20 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         long lastExecutionTime;
         for (;;) {
             //运行task的run方法
+            //执行Task Queue中原有的任务和从延时队列中复制的已经超时或
+            // 者正处于超时状态的定时任务，代
             safeExecute(task);
 
             runTasks ++;
 
             /**
              * 每执行64个任务就进行一次是否到达截至时间的检查
+             *
+             * 由于获取系统纳秒时间是个耗时的操作，每次循环都获取当前系
+             * 统纳秒时间进行超时判断会降低性能。为了提升性能，每执行60次循
+             * 环判断一次，如果当前系统时间已经到了分配给非I/O操作的超时时
+             * 间，则退出循环。这是为了防止由于非I/O任务过多导致I/O操作被长
+             * 时间阻塞。
              */
             // Check timeout every 64 tasks because nanoTime() is relatively expensive.
             // XXX: Hard-coded value - will make it configurable if it is really a problem.
@@ -868,6 +882,25 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     }
 
     private void execute0(@Schedule Runnable task) {
+        /**
+         * 在 写 的 过 程 中 有 两 种 task ， 分 别 是 WriteTask 和
+         * WriteAndFlushTask，主要根据是否刷新来决定使用哪种task。在
+         * NioSocketChannel中，每个Channel都有一条NioEventLoop线程与之对
+         * 应，在NioEventLoop的父类SingleThreadEventExecutor中有个队列属
+         * 性 ， 叫 taskQueue ， 它 主 要 通 过 SingleThreadEventExecutor 的
+         * execute() 方 法 存 放 非 EventLoop 线 程 的 任 务 ， 包 括 WriteTask 和
+         * WriteAddFlushTask这两种WriteTask。当调用添加任务时，会唤醒
+         * EventLoop线程，从而I/O线程会去调用这些任务的run()方法，并把结
+         * 果写回Socket通道。
+         *
+         * io.netty.channel.AbstractChannel.AbstractUnsafe#flush()->
+         * io.netty.channel.socket.nio.NioSocketChannel#doWrite(io.netty.channel.ChannelOutboundBuffer)->
+         * io.netty.channel.nio.AbstractNioByteChannel#incompleteWrite(boolean)-->
+         * io.netty.util.concurrent.SingleThreadEventExecutor#execute(java.lang.Runnable)->
+         * 当前方法
+         *
+         *
+         */
         ObjectUtil.checkNotNull(task, "task");
         execute(task, !(task instanceof LazyRunnable) && wakesUpForTask(task));
     }

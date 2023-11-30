@@ -238,6 +238,10 @@ public abstract class AbstractNioChannel extends AbstractChannel {
     protected abstract class AbstractNioUnsafe extends AbstractUnsafe implements NioUnsafe {
 
         protected final void removeReadOp() {
+            /**
+             * 取消读事件，Netty基于NIO给出了非常标准的实现，基本可以当场模板代码使用：
+             * 其实现关键点：首先判断键值对是否有效，然后通过位运算进行取消注册。
+             */
             SelectionKey key = selectionKey();
             // Check first if the key is still valid as it may be canceled as part of the deregistration
             // from the EventLoop

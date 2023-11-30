@@ -228,6 +228,33 @@ public class DefaultChannelConfig implements ChannelConfig {
     @Deprecated
     public int getMaxMessagesPerRead() {
         try {
+            /**
+             *
+             * Step2：创建接受缓存区内存分配器，这里有两个关键点：
+             * maxMessagesPerRead
+             * 每一个通道在一次读事件处理过程中最多可以调用底层Socket进行读取的次数，默认为16
+             * 次， 这里的设计哲学是避免一个通道需要读取太多的数据，从而影响其他通道的数据读，因
+             * 为在一个事件选择器中多个通道的读事件是串行执行的 。
+             *
+             * 因为：在Netty的EventLoop线程模型中
+             * 业务线程调用 Channel 对象的 write 方法并不会立即写入网络，只是
+             * 将数据放入一个待写入队列(缓存区)，然后IO线程每次执行事件选择后，
+             * 会从待写入缓存区中获取写入任务，将数据真正写入到网络中，
+             * 数据到达网卡之前会经过一系列的 Channel Handler(Netty事件传播机制)，
+             * 最终写入网卡。
+             * EventLoop中有一个Selector管理多个Client SocketChannel,run方法中一次取出多个就绪的Channel，
+             * 然后依次处理每一个channel
+             * 每一IO线程在执行上述操作时是串行执行的，即注册在一个
+             * Selector(事件选择器)中的所有通道，同一时间只有一个通道的事件被处理。
+             *
+             * IO 线程在处理完所有就绪事件后，还会从任务队列(Task Queue)获取任务，
+             * 例如上文中提到的业务线程在执行完业务后需要将返回结果写入网络，
+             * Netty 中所有的网络读写操作只能在IO线程中真正获得运行，故业务线
+             * 程需要将带写入的响应结果封装成 Task，放入到 IO 线程任务队列中
+             *
+             *
+             * 基于这样的设计，如果一个通道在一次读事件中读取了太多的数据，那么就会导致其他通道的读事件得不到及时处理，
+             */
             MaxMessagesRecvByteBufAllocator allocator = getRecvByteBufAllocator();
             return allocator.maxMessagesPerRead();
         } catch (ClassCastException e) {

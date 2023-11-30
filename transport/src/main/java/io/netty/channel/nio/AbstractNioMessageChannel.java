@@ -90,6 +90,9 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
             assert eventLoop().inEventLoop();
             final ChannelConfig config = config();
             final ChannelPipeline pipeline = pipeline();
+            /**
+             *  接收对端数据时，ByteBuf的分配策略，基于历史数据动态调整初始化大小，避免太大浪费空间，太小又会频繁扩容
+             */
             final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
             allocHandle.reset(config);
 
@@ -99,7 +102,13 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
                 try {
                     do {
                         /**
-                         * 调用子类的doReadMessages方法，读取数据包，并放入readBuf链表中，当成功读取时返回1
+                         * 1.调用子类的doReadMessages方法，读取数据包，并放入readBuf链表中，当成功读取时返回1
+                         * 2.readBuf=List<Object> , 这里的doReadMessages方法是逻辑上的read方法。因为
+                         * 对于socketServerChannel来说，监听到OP_Accept事件后 我们会通过 自定义的逻辑层面的read来获取结果
+                         * 对于ServerSocketChannel来说，就是接收一个客户端Channel，添加到readBuf,对应的实现是：
+                         * io.netty.channel.socket.nio.NioServerSocketChannel#doReadMessages(java.util.List)
+                         *
+                         * 对于SocketChannel来说，OP_Read事件发生的时候，通过逻辑层面的read方法来获取结果,就是读取客户端发送的数据，添加到readBuf
                          */
                         int localRead = doReadMessages(readBuf);
                         if (localRead == 0) {
@@ -109,7 +118,9 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
                             closed = true;
                             break;
                         }
-
+                        /**
+                         *  递增已读取的消息数量
+                         */
                         allocHandle.incMessagesRead(localRead);
                     } while (continueReading(allocHandle));//不能超过16次
                 } catch (Throwable t) {
@@ -122,13 +133,28 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
                  */
                 for (int i = 0; i < size; i ++) {
                     readPending = false;
+                    /**
+                     * 通过pipeline传播ChannelRead事件。
+                     * Boss中的NioEventLoop 执行selector.slectNow()，当serverSocketChannel发生OP_Accept事件的时候就会返回
+                     * 对于OP_Accept和OP_read事件，Netty都是使用  unsafe.read();来处理（具体查看NioEventLoop.processSelectedKey()中对事件的处理）
+                     *
+                     * 对于服务端的Unsafe.read()，这里会执行io.netty.channel.nio.
+                     * AbstractNioMessageChannel.NioMessageUnsafe.read()方法，它会调用JDK底层的ServerSocketChannel.accept()
+                     * 接收到客户端的连接后，将其封装成Netty的NioSocketChannel，再通过Pipeline将ChannelRead事件传播出去，
+                     * 这样ServerBootstrapAcceptor就可以在ChannelRead回调里处理新的客户端连接了。
+                     *
+                     * 	ServerBootstrapAcceptor#channelRead(io.netty.channel.ChannelHandlerContext, java.lang.Object)
+                     *
+                     */
                     pipeline.fireChannelRead(readBuf.get(i));
                 }
                 readBuf.clear();
                 /**
                  * 记录当前读取记录，一边下次分配合理内存
+                 * 读取完毕的回调，有的Handle会根据本次读取的总字节数，自适应调整下次应该分配的缓冲区大小
                  */
                 allocHandle.readComplete();
+                // 通过pipeline传播ChannelReadComplete事件
                 pipeline.fireChannelReadComplete();
 
                 if (exception != null) {

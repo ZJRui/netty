@@ -511,6 +511,12 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
              * bind:205, AbstractBootstrap (io.netty.bootstrap)
              * bind:64, EchoServer (com.phei.netty.frame.delimiter)
              * main:84, EchoServer (com.phei.netty.frame.delimiter)
+             *
+             *
+             * register方法主要用于将当前Unsafe对应的Channel注册到EventLoop的多路复用器上，
+             * 然后调用DefaultChannelPipeline的fireChannelRegisted方法，
+             * 如果Channel被激活，则调用fireChannelActive方法。
+             *
              */
             ObjectUtil.checkNotNull(eventLoop, "eventLoop");
             if (isRegistered()) {

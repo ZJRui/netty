@@ -132,7 +132,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      * has a no-args constructor, its highly recommend to just use {@link #channel(Class)} to
      * simplify your code.
      */
-    @SuppressWarnings({ "unchecked", "deprecation" })
+    @SuppressWarnings({"unchecked", "deprecation"})
     public B channelFactory(io.netty.channel.ChannelFactory<? extends C> channelFactory) {
         return channelFactory((ChannelFactory<C>) channelFactory);
     }
@@ -231,6 +231,10 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      * Create a new {@link Channel} and bind it.
      */
     public ChannelFuture bind() {
+        /**
+         * bind方法是一个public方法
+         *
+         */
         validate();
         SocketAddress localAddress = this.localAddress;
         if (localAddress == null) {
@@ -289,7 +293,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         }
 
         if (regFuture.isDone()) {
-            //注册成功后需要绑定端口
+            // 注册成功后需要绑定端口
             /**
              * 由NioEventLoop线程去异步执行，此时需要创建channelpromise对象
              */
@@ -348,11 +352,15 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
              */
             channel = channelFactory.newChannel();
             /**
-             * ）初始化NioServerSocketChannel、设置属性attr和参数
+             * 1.初始化NioServerSocketChannel、设置属性attr和参数
              * option，并把Handler预添加到NioServerSocketChannel的Pipeline管
              * 道中。其中，attr是绑定在每个Channel上的上下文；option一般用来
              * 设置一些Channel的参数；NioServerSocketChannel上的Handler除了
              * 包括用户自定义的，还会加上ServerBootstrapAcceptor。
+             *
+             *2.在Netty服务端启动时，会调用ServerBootstrap.bind()绑定本地端口用来监听客户端的连接。
+             * 而这个方法会通过反射创建ServerSocketChannel并初始化，ServerBootstrap.init()会初始化ServerSocketChannel，
+             * 将ServerBootstrapAcceptor添加到服务端Channel的Pipeline中。
              *
              *
              */
@@ -390,6 +398,13 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
          * 会触发active事件，为注册到Selector上的ServerSocket Channel加
          * 上监听OP_ACCEPT事件；最终运行ChannelPromise的safeSetSuccess()
          * 方法唤醒server Bootstrap.bind(port).sync()。
+         *
+         *
+         *
+         * 2.careful: ： 如果Boss有多个EventLoop那么每一个EventLoop都有一个Selector，  ServerSocketChannel要注册到每一个Selector上吗？
+         *    Server在启动的时候会执行NioServerSocketChannel的doRegister方法，在register的时候，Boss EventLoopGroup是
+         *    MultithreadEventLoopGroup，其register实现是随机选择一个EventLoop将Channel注册到EventLoop上，
+         *    因此在Boos是多线程的模型中， ServerSocketChannel只会注册到一个EventLoop的selector对象上。
          *
          */
 
@@ -537,7 +552,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     }
 
     static void setAttributes(Channel channel, Map.Entry<AttributeKey<?>, Object>[] attrs) {
-        for (Map.Entry<AttributeKey<?>, Object> e: attrs) {
+        for (Map.Entry<AttributeKey<?>, Object> e : attrs) {
             @SuppressWarnings("unchecked")
             AttributeKey<Object> key = (AttributeKey<Object>) e.getKey();
             channel.attr(key).set(e.getValue());
@@ -546,7 +561,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
 
     static void setChannelOptions(
             Channel channel, Map.Entry<ChannelOption<?>, Object>[] options, InternalLogger logger) {
-        for (Map.Entry<ChannelOption<?>, Object> e: options) {
+        for (Map.Entry<ChannelOption<?>, Object> e : options) {
             setChannelOption(channel, e.getKey(), e.getValue(), logger);
         }
     }
@@ -567,8 +582,8 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     @Override
     public String toString() {
         StringBuilder buf = new StringBuilder()
-            .append(StringUtil.simpleClassName(this))
-            .append('(').append(config()).append(')');
+                .append(StringUtil.simpleClassName(this))
+                .append('(').append(config()).append(')');
         return buf.toString();
     }
 

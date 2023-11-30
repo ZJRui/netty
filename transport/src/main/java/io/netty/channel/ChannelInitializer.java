@@ -111,6 +111,22 @@ public abstract class ChannelInitializer<C extends Channel> extends ChannelInbou
             // will be added in the expected order.
             if (initChannel(ctx)) {
 
+                /**
+                 *
+                 * 在Netty服务端启动时，会调用ServerBootstrap.bind()绑定本地端口用来监听客户端的连接。
+                 * 而这个方法会通过反射创建ServerSocketChannel并初始化，ServerBootstrap.init()会初
+                 * 始化ServerSocketChannel，将ServerBootstrapAcceptor添加到服务端Channel的Pipeline中。
+                 *
+                 *
+                 * init方法用于服务端Channel的初始化，初始化ServerSocketChannel的ChannelPipeline，
+                 * 并向ChannelPipeline中添加了一个ChannelInitializer。
+                 *
+                 * ChannelInitializer是一个ChannelHandler，但它不处理任何出站、入站事件，其目的只为了完成Channel的初始化。
+                 * 当ChannelHandler被添加到ChannelPipeline后，会触发一个handlerAdded方法回调，这个方法里会调用initChannel()进行
+                 * 初始化，初始化完成后会将自己从Pipeline中删除，
+                 *
+                 */
+
                 // We are done with init the Channel, removing the initializer now.
                 removeState(ctx);
             }

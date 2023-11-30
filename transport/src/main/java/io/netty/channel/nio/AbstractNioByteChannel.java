@@ -180,8 +180,21 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
             final ChannelPipeline pipeline = pipeline();
             /**
              * 获取内存分配器，默认为 PooledByteBufAllocator
+             * 在应用Netty时，通过默认设
+             * 置PooledByteBufAllocator执行ByteBuf的分配。当用NioByteUnsafe
+             * 的 read() 方 法 读 取 NioSocketChannel 数 据 时 ， 需 要 调 用
+             * PooledByteBufAllocator去分配内存，具体分配多少内存，由Handle
+             * 的guess()方法决定，此方法只预测所需的缓冲区的大小，不进行实际
+             * 的 分 配 。 PooledByteBufAllocator 从 PoolThreadLocalCache 中 获 取
+             * PoolArena，最终的内存分配工作由PoolArena完成。
              */
             final ByteBufAllocator allocator = config.getAllocator();
+            /**
+             * RecvByteBufAllocator
+             * 接受缓冲区的内存分配策略，分为分配固定大小(不够时扩容)、动态变化(根据历史分配的大
+             * 小，动态条件合适的内存大小)， 这里主要的设计哲学是合理利用内存，并减少扩容，提高
+             * 内存的分配效率与使用效率 。
+             */
             final RecvByteBufAllocator.Handle allocHandle = recvBufAllocHandle();
             /**
              * 清空上一次读取的字节数，每次读取时均重新计算 字节buf分配器，并计算字节buf分配器handler
@@ -194,6 +207,7 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
                 do {
                     /**
                      * 分配内存
+                     * 首先分配一个ByteBuf，俗称接收缓存区，用来存放从网络中读取的内容。
                      */
                     byteBuf = allocHandle.allocate(allocator);
                     /**
@@ -211,6 +225,10 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
                         if (close) {
                             /**
                              * 当读取到-1 时，表示channel通道已经关闭。 没必要继续读
+                             *
+                             * 即调用NIO中的SocketChannel进行读数据，其返回参数表示这次从网卡中读取到的字节
+                             * 数。 如果读取到的字节少于0，则表示对端通道已关闭，己端也需要进行相应的处理，例如
+                             * 关闭通道 。
                              */
                             // There is nothing left to read as we received an EOF.
                             readPending = false;
@@ -223,19 +241,93 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
                     allocHandle.incMessagesRead(1);
                     readPending = false;
                     /**
-                     * 通知通道处理读取到的数据，触发channel管道的fireChannelRead事件
-                     *
+                     * 1.通知通道处理读取到的数据，触发channel管道的fireChannelRead事件
                      *
                      * 在读数据时，AbstractNioMessageChannel数据不存在粘包问题，
                      * 因此AbstractNioMessageChannel在read()方法中先循环读取数据包，
                      * 再触发channelRead事件。
                      *
+                     * NioByteUnsafe不断地调用NioSocketChannel
+                     * 的doReadBytes()方法从Channel中读取数据，再把读取到的ByteBuf交
+                     * 给 管 道 Pipeline ， 并 触 发 后 续 一 系 列 ChannelInboundHandler 的
+                     * channelRead()方法。整个读取数据的过程涉及的Handler都是以
+                     * HeadContext开头的，按顺序运行用户自定义的各个解码器和服务端业
+                     * 务逻辑处理Handler。
+                     *
+                     * 2.读到一批数据后，会通过事件传播机制向事件链中传播channelRead事件，触发后续对该批数据的处理。
+                     *
+                     * question：NioByteUnsafe这里的while中每次执行应该是读取到了部分数据，这些部分数据fireChannelRead 是如何处理没有读取到完整的数据的
+                     * Handlers是用户设置的编/解码器，。对于用户选择的解码器，除了MessageToMessageCodec的子类，其他解码器首
+                     * 先 都 会 经 过 其 父 类 ByteToMessageDecoder 的 channelRead() 方 法 处理ByteBuf,然后在调用子类的decode()方法，
+                     *
+                     *
+                     * 3.完成一次异步读之后，就会触发一次ChannelRead事件，这里要特
+                     * 别提醒大家的是：完成一次读操作，并不意味着读到了一条完整的消
+                     * 息，因为TCP底层存在组包和粘包，所以，一次读操作可能包含多条消
+                     * 息，也可能是一条不完整的消息。因此不要把它跟读取的消息个数等
+                     * 同起来。在没有做任何半包处理的情况下，以ChannelRead的触发次数
+                     * 做计数器来进行性能分析和统计，是完全错误的。当然，如果你使用
+                     * 了半包解码器或者处理了半包，就能够实现一次 ChannelRead对应一
+                     * 条完整的消息。
+                     *
+                     * 4.连续的读操作会阻塞排在后面的任务队列中待执行的Task，以及写操作，所
+                     * 以，要对连续读操作做上限控制，默认值为16次，无论TCP缓冲区有多
+                     * 少码流需要读取，只要连续16次没有读完，都需要强制退出，等待下
+                     * 次selector轮询周期再执行。
+                     *
+                     * 5. 底 层 的 SocketChannel  read() 方 法 读 取 ByteBuf ， 触 发
+                     * ChannelRead事件，由I/O线程NioEventLoop调用ChannelPipeline的
+                     * fireChannelRead(Object  msg) 方 法 ， 将 消 息 （ ByteBuf ） 传 输 到
+                     * ChannelPipeline中；
                      */
                     pipeline.fireChannelRead(byteBuf);
                     byteBuf = null;
+
+                    /**
+                     *
+                     * 这里的while 判断的依据：
+                     *
+                     * Step2：创建接受缓存区内存分配器，这里有两个关键点：
+                     * maxMessagesPerRead：每一个通道在一次读事件处理过程中最多可以调用底层Socket进行读取的次数，默认为16
+                     * 次， 这里的设计哲学是避免一个通道需要读取太多的数据，从而影响其他通道的数据读，因
+                     * 为在一个事件选择器中多个通道的读事件是串行执行的 。
+                     *
+                     * 因为：在Netty的EventLoop线程模型中
+                     * 业务线程调用 Channel 对象的 write 方法并不会立即写入网络，只是
+                     * 将数据放入一个待写入队列(缓存区)，然后IO线程每次执行事件选择后，
+                     * 会从待写入缓存区中获取写入任务，将数据真正写入到网络中，
+                     * 数据到达网卡之前会经过一系列的 Channel Handler(Netty事件传播机制)，
+                     * 最终写入网卡。
+                     * EventLoop中有一个Selector管理多个Client SocketChannel,run方法中一次取出多个就绪的Channel，
+                     * 然后依次处理每一个channel
+                     * 每一IO线程在执行上述操作时是串行执行的，即注册在一个
+                     * Selector(事件选择器)中的所有通道，同一时间只有一个通道的事件被处理。
+                     *
+                     * IO 线程在处理完所有就绪事件后，还会从任务队列(Task Queue)获取任务，
+                     * 例如上文中提到的业务线程在执行完业务后需要将返回结果写入网络，
+                     * Netty 中所有的网络读写操作只能在IO线程中真正获得运行，故业务线
+                     * 程需要将带写入的响应结果封装成 Task，放入到 IO 线程任务队列中
+                     *
+                     *
+                     * 基于这样的设计，如果一个通道在一次读事件中读取了太多的数据，那么就会导致其他通道的读事件得不到及时处理，
+                     *
+                     *
+                     * 2.进入for循环。循环体的作用：使用内存分配器获取数据容
+                     * 器ByteBuf，调用doReadBytes()方法将数据读取到容器中，如果本次
+                     * 循环没有读到数据或链路已关闭，则跳出循环。另外，当循环次数达
+                     * 到属性METADATA的defaultMaxMessagesPerRead次数（默认为16）时，
+                     * 也会跳出循环。由于TCP传输会产生粘包问题，因此每次读取都会触发
+                     * channelRead事件，进而调用业务逻辑处理Handler。
+                     *
+                     */
                 } while (allocHandle.continueReading());
 
+                /**
+                 * 跳出循环后，表示本次读取已完成。调用allocHandle的
+                 * readComplete()方法，并记录读取记录，用于下次分配合理内存。
+                 */
                 allocHandle.readComplete();
+                // Step6：一次或多次读操作结束后，会触发一次读完成事件，向整个事件链传播。
                 pipeline.fireChannelReadComplete();
 
                 if (close) {
@@ -244,6 +336,12 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
             } catch (Throwable t) {
                 handleReadException(pipeline, byteBuf, t, close, allocHandle);
             } finally {
+                /**
+                 * Step1：如果没有开启自动注册读事件，在每一次读事件处理过后会取消读事件，默认为自动注册。
+                 * 温馨提示：如果通道不注册读事件，将无法从通道中读取数据，即无法处理请求或接受响应。
+                 *
+                 * 如果没有开启自动读事件，需要应用程序在需要的时候手动调用通道的read方法。
+                 */
                 // Check if there is a readPending which was not processed yet.
                 // This could be for two reasons:
                 // * The user called Channel.read() or ChannelHandlerContext.read() in channelRead(...) method

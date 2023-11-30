@@ -32,11 +32,24 @@ import java.util.concurrent.ThreadFactory;
  */
 public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutorGroup implements EventLoopGroup {
 
+    /**
+     *
+     *
+     * 1. MultithreadEventLoopGroup是NioEventLoopGroup的父类
+     *
+     * NioEventLoopGroup继承自 MultithreadEventLoopGroup 多提供了两个方法setIoRatio和rebuildSelectors，
+     * 一个用于设置NioEventLoop用于IO处理的时间占比，另一个是重新构建Selectors，来处理epoll空轮询导致CPU100%的bug
+     *
+     *
+     */
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(MultithreadEventLoopGroup.class);
 
     private static final int DEFAULT_EVENT_LOOP_THREADS;
 
     static {
+        /**
+         *因此，Netty默认构建的线程数的是电脑线程数的2倍。那它是在什么时候启动的呢？是在“bind”的时候启动的！
+         */
         DEFAULT_EVENT_LOOP_THREADS = Math.max(1, SystemPropertyUtil.getInt(
                 "io.netty.eventLoopThreads", NettyRuntime.availableProcessors() * 2));
 
@@ -49,6 +62,15 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
      * @see MultithreadEventExecutorGroup#MultithreadEventExecutorGroup(int, Executor, Object...)
      */
     protected MultithreadEventLoopGroup(int nThreads, Executor executor, Object... args) {
+        /**
+         *
+         * 这里是一个三元表达式，判断传递过来的参数“nThreads”是否等于0，如果是的话就赋值“DEFAULT_EVENT_LOOP_THREADS”，如果不是的话就赋值为传递过来的值。
+         *
+         * 那么“DEFAULT_EVENT_LOOP_THREADS”是在什么时候初始化的呢？是在静态代码块中初始化。
+         *
+         *因此，Netty默认构建的线程数的是电脑线程数的2倍。那它是在什么时候启动的呢？是在“bind”的时候启动的！
+         *
+         */
         super(nThreads == 0 ? DEFAULT_EVENT_LOOP_THREADS : nThreads, executor, args);
     }
 

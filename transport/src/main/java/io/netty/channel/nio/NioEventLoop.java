@@ -141,13 +141,33 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
     private final SelectStrategy selectStrategy;
 
+    /**
+     * 由于NioEventLoop需要同时处理I/O事件和非I/O任务，为了保证
+     * 两者都能得到足够的CPU时间被执行，Netty提供了I/O比例供用户定
+     * 制。如果I/O操作多于定时任务和Task，则可以将I/O比例调大，反之
+     * 则调小，默认值为50%。
+     */
     private volatile int ioRatio = 50;
     private int cancelledKeys;
     private boolean needsToSelectAgain;
 
+    /**
+     *
+     * @param parent
+     * @param executor
+     * @param selectorProvider
+     * @param strategy
+     * @param rejectedExecutionHandler
+     * @param taskQueueFactory
+     * @param tailTaskQueueFactory
+     */
     NioEventLoop(NioEventLoopGroup parent, Executor executor, SelectorProvider selectorProvider,
                  SelectStrategy strategy, RejectedExecutionHandler rejectedExecutionHandler,
                  EventLoopTaskQueueFactory taskQueueFactory, EventLoopTaskQueueFactory tailTaskQueueFactory) {
+        /**
+         * 这里NioEventLoop继承自SingleThreadEventLoop
+         */
+
         super(parent, executor, false, newTaskQueue(taskQueueFactory), newTaskQueue(tailTaskQueueFactory),
                 rejectedExecutionHandler);
         this.provider = ObjectUtil.checkNotNull(selectorProvider, "selectorProvider");
@@ -190,6 +210,10 @@ public final class NioEventLoop extends SingleThreadEventLoop {
     private SelectorTuple openSelector() {
         final Selector unwrappedSelector;
         try {
+            /**
+             * 1.关于provider参考 io.netty.channel.socket.nio.NioSocketChannel#DEFAULT_SELECTOR_PROVIDER
+             *
+             */
             unwrappedSelector = provider.openSelector();
         } catch (IOException e) {
             throw new ChannelException("failed to open a new selector", e);
@@ -203,9 +227,8 @@ public final class NioEventLoop extends SingleThreadEventLoop {
         }
         /**
          *
-         * 以下内容是开启了优化开关
-         *
-         * 。Netty为Selector设置
+         * 1.以下内容是开启了优化开关
+         * Netty为Selector设置
          * 了 优 化 开 关 ， 如 果 开 启 优 化 开 关 ， 则 通 过 反 射 加 载
          * sun.nio.ch.SelectorImpl 对 象 ， 并 通 过 已 经 优 化 过 的
          * SelectedSelectionKeySet 替 换 sun.nio.ch.SelectorImpl 对 象 中 的
@@ -218,6 +241,23 @@ public final class NioEventLoop extends SingleThreadEventLoop {
          * 数 组 的 遍 历 效 率 更 高 。 开 启 优 化 开 关 ， 需 要 将 系 统 属 性
          * io.netty.noKeySetOptimization设置为true。
          *
+         *
+         * 2.在阅读netty源码的时候对selectedKeys一直有个疑问？
+         * select(boolean b); 方法选择的时候是如何将key放到集合selectedKeys里面去的
+         * 经过debug发现在WindowsSelectorImpl.processFDSet方法里面有selectedKeys.add(sk);
+         * 为什么调用了io.netty.channel.nio.SelectedSelectionKeySet#add 方法；
+         * 而且selectedKey 是SelectorImpl 里面的属性， protected Set<SelectionKey> selectedKeys = new HashSet(); 是不是很奇怪，
+         * 为什么调用到了比人的方法里面去了？
+         *
+         * 经过分析NioEventLoop里面的selectedKeys属性， 看看是如何进行初始化的之前真的没有思考太多， 这次发现了一个重要的地方
+         * NioEventLoop.openSelector()
+         *
+         * 内部采用了AccessController.doPriviledged 回调函数，绕过权限的检查，
+         * 通过反射来修改了SelectorImpl类里面的selectedKeys属性的类型；
+         *
+         * 就是说之前是HashSet的实例对象， 现在改成了自己的类即为： SelectedSelectionKeySet (继承了AbstractSet)  不就是一个Set类型吗；
+         *
+         * 可以通-Dio.netty.noKeySetOptimization=true 禁止选择的key优化
          */
 
         Object maybeSelectorImplClass = AccessController.doPrivileged(new PrivilegedAction<Object>() {
@@ -251,6 +291,24 @@ public final class NioEventLoop extends SingleThreadEventLoop {
             @Override
             public Object run() {
                 try {
+                    /**
+                     *在阅读netty源码的时候对selectedKeys一直有个疑问？
+                     * select(boolean b); 方法选择的时候是如何将key放到集合selectedKeys里面去的
+                     * 经过debug发现在WindowsSelectorImpl.processFDSet方法里面有selectedKeys.add(sk);
+                     * 为什么调用了io.netty.channel.nio.SelectedSelectionKeySet#add 方法；
+                     * 而且selectedKey 是SelectorImpl 里面的属性， protected Set<SelectionKey> selectedKeys = new HashSet(); 是不是很奇怪，
+                     * 为什么调用到了比人的方法里面去了？
+                     *
+                     * 经过分析NioEventLoop里面的selectedKeys属性， 看看是如何进行初始化的之前真的没有思考太多， 这次发现了一个重要的地方
+                     * NioEventLoop.openSelector()
+                     *
+                     * 内部采用了AccessController.doPriviledged 回调函数，绕过权限的检查，
+                     * 通过反射来修改了SelectorImpl类里面的selectedKeys属性的类型；
+                     *
+                     * 就是说之前是HashSet的实例对象， 现在改成了自己的类即为： SelectedSelectionKeySet (继承了AbstractSet)  不就是一个Set类型吗；
+                     *
+                     * 可以通-Dio.netty.noKeySetOptimization=true 禁止选择的key优化
+                     */
                     Field selectedKeysField = selectorImplClass.getDeclaredField("selectedKeys");
                     Field publicSelectedKeysField = selectorImplClass.getDeclaredField("publicSelectedKeys");
 
@@ -562,8 +620,11 @@ public final class NioEventLoop extends SingleThreadEventLoop {
                 int strategy;
                 try {
                     /**
-                     * 根据是否由任务获取策略，默认策略，当由任务时 返回selector.selectNow
+                     * 1.根据是否由任务获取策略，默认策略，当由任务时 返回selector.selectNow
                      * 当无任务时返回SelectStrategy.select=-1
+                     *
+                     * 2. 这里会在Selector对象上执行selector.selectedKeys() 从而得到就绪的key，
+                     * 只不过这里 selector.selectedKeys()这个操作是以 selectNowSupplier 函数的形式
                      */
                     strategy = selectStrategy.calculateStrategy(selectNowSupplier, hasTasks());
                     switch (strategy) {
@@ -610,6 +671,14 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
                 /**
                  * 检测次数增加，这个参数主要用来判断是否为空轮询
+                 *
+                 * 2.，runAllTasks：主要目的是执行taskQueue队列和定时
+                 * 任务队列中的任务，如心跳检测、异步写操作等。首先NioEventLoop
+                 * 会根据ioRatio（I/O事件与taskQueue运行的时间占比）计算任务执行
+                 * 时 长 。 由 于 一 个 NioEventLoop 线 程 需 要 管 理 很 多 Channel ， 这 些
+                 * Channel的任务可能非常多，若要都执行完，则I/O事件可能得不到及
+                 * 时处理，因此每执行64个任务后就会检测执行任务的时间是否已用
+                 * 完，如果执行任务的时间用完了，就不再执行后续的任务了
                  */
                 selectCnt++;
                 cancelledKeys = 0;
@@ -643,6 +712,13 @@ public final class NioEventLoop extends SingleThreadEventLoop {
                          */
                         // Ensure we always run tasks.
                         final long ioTime = System.nanoTime() - ioStartTime;
+                        /**
+                         * 由于NioEventLoop需要同时处理I/O事件和非I/O任务，为了保证
+                         * 两者都能得到足够的CPU时间被执行，Netty提供了I/O比例供用户定
+                         * 制。如果I/O操作多于定时任务和Task，则可以将I/O比例调大，反之
+                         * 则调小，默认值为50%。
+                         * Task的执行时间根据本次I/O操作的执行时间计算得来
+                         */
                         ranTasks = runAllTasks(ioTime * (100 - ioRatio) / ioRatio);
                     }
                 } else {
@@ -854,11 +930,39 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
     private void processSelectedKey(SelectionKey k, AbstractNioChannel ch) {
         /**
-         * processSelectedKeys 主要处理第一部分轮询得到的就绪的key，并取出这些SelectionKey及其附件attachment。
+         * 1.processSelectedKeys 主要处理第一部分轮询得到的就绪的key，并取出这些SelectionKey及其附件attachment。
          * 附件由两种类型： （1）AbstractNioChannel （2）NioTask。 其中第二种附件在Netty内部未使用，因此只分析AbstractNioChannel。
          *
-         *
          * 根据key的实际爱你类型触发AbstractNioChannel的unsafe的不同方法。 这些方法主要是io的读写操作
+         *
+         *
+         *
+         * 2.Boss和worker的EventLoop都有自己的selector. 对于NioEventLoop来说，他只需要知道channel和这个channel上感兴趣的事件就好了。
+         * 比如对于Boss来说，channel就是ServerSocketChannel，感兴趣的事件就是OP_Accept,对于worker来说，channel就是SocketChannel，感兴趣的事件就是OP_Read和OP_Write。
+         *
+         * 不管是Boss还是Work ，每个EventLoop作为线程都会不断的在run方法中循环调用selector.selectedKeys()方法，这个方法会返回所有已经就绪的channel。
+         *
+         *
+         *
+         * 3.当调用ServerBootstrap.bind()方法时，Netty会创建ServerSocketChannel，
+         * 并把它注册到BossGroup的NioEventLoop的Selector多路复用器，最后再绑定到本地端口。
+         * 这样Netty就可以接收客户端的连接了，当有新的连接接入时，Selector会监听到并返回准备就绪的Channel，
+         * NioEventLoop会处理这些事件，详见NioEventLoop.processSelectedKey()方法。
+         * 由于事件类型是OP_ACCEPT，因此会调用Unsafe.read()处理
+         *
+         * 对于ServerSocketChannel只关心OP_ACCEPT事件
+         *
+         * 这个Unsafe接口有两大实现，分别是服务端Channel的Unsafe和客户端Channel的Unsafe。
+         * 前者的read负责接收SocketChannel连接，后者的read负责读取对端发送的数据并封装成ByteBuf。
+         *
+         *
+         * 对于服务端的Unsafe.read()，这里会执行io.netty.channel.nio.AbstractNioMessageChannel.
+         * NioMessageUnsafe.read()方法，它会调用JDK底层的ServerSocketChannel.accept()接收到客户端的连接后，
+         * 将其封装成Netty的NioSocketChannel，再通过Pipeline将ChannelRead事件传播出去，
+         * 这样ServerBootstrapAcceptor就可以在ChannelRead回调里处理新的客户端连接了。
+         *
+         *
+         *
          */
 
         final AbstractNioChannel.NioUnsafe unsafe = ch.unsafe();
@@ -903,9 +1007,28 @@ public final class NioEventLoop extends SingleThreadEventLoop {
                 ch.unsafe().forceFlush();
             }
 
+            // 数据可读、有新的连接接入
             // Also check for readOps of 0 to workaround possible JDK bug which may otherwise lead
             // to a spin loop
             if ((readyOps & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) != 0 || readyOps == 0) {
+
+                /**
+                 *
+                 * 1.对于ServerSocketChannel只关心OP_ACCEPT事件
+                 *
+                 * 这个Unsafe接口有两大实现，分别是服务端Channel的Unsafe和客户端Channel的Unsafe。
+                 * 前者的read负责接收SocketChannel连接，后者的read负责读取对端发送的数据并封装成ByteBuf。
+                 *
+                 *
+                 * 对于服务端的Unsafe.read()，这里会执行io.netty.channel.nio.AbstractNioMessageChannel.
+                 * NioMessageUnsafe.read()方法，它会调用JDK底层的ServerSocketChannel.accept()接收到客户端的连接后，
+                 * 将其封装成Netty的NioSocketChannel，再通过Pipeline将ChannelRead事件传播出去，
+                 * 这样ServerBootstrapAcceptor就可以在ChannelRead回调里处理新的客户端连接了。
+                 *
+                 *
+                 * 2.AbstractNioByteChannel的内部类NioByteUnsafe#read SocketChannel对应的读事件处理流程，即IO读的处理实现。
+                 * AbstractNioMessageChannel的内部类NioMessageUnsafe#read  ServerSocketChannle对应的读事件处理流程。
+                 */
                 unsafe.read();
             }
         } catch (CancelledKeyException ignored) {
@@ -1014,11 +1137,25 @@ public final class NioEventLoop extends SingleThreadEventLoop {
     }
 
     private int select(long deadlineNanos) throws IOException {
+        /**
+         *  若 taskQueue 队 列 中 有 任 务 ， 且 从 EventLoop 线 程 进 入
+         * select()方法开始后，一直无其他线程触发唤醒动作，则需要调用
+         * selectNow() 方 法 ， 并 立 刻 返 回 。 因 为 在 运 行 select(boolean
+         * oldWakenUp) 之 前 ， 若 有 线 程 触 发 了 wakeUp 动 作 ， 则 需 要 保 证
+         * tsakQueue队列中的任务得到了及时处理，防止等待timeoutMillis超
+         * 时后处理。
+         */
         if (deadlineNanos == NONE) {
             return selector.select();
         }
         // Timeout will only be 0 if deadline is within 5 microsecs
         long timeoutMillis = deadlineToDelayNanos(deadlineNanos + 995000L) / 1000000L;
+        /**
+         * 当select(timeoutMillis)阻塞运行时，在以下4种情况下会
+         * 正常唤醒线程：其他线程执行了wakeUp唤醒动作、检测到就绪Key、遇
+         * 上空轮询、超时自动醒来。唤醒线程后，除了空轮询会继续轮询，其
+         * 他正常情况会跳出循环。具体代码解读如下：
+         */
         return timeoutMillis <= 0 ? selector.selectNow() : selector.select(timeoutMillis);
     }
 

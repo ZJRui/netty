@@ -27,6 +27,14 @@ final class DefaultSelectStrategy implements SelectStrategy {
 
     @Override
     public int calculateStrategy(IntSupplier selectSupplier, boolean hasTasks) throws Exception {
+        /**
+         *  若 taskQueue 队 列 中 有 任 务 ， 且 从 EventLoop 线 程 进 入
+         * select()方法开始后，一直无其他线程触发唤醒动作，则需要调用
+         * selectNow() 方 法 ， 并 立 刻 返 回 。 因 为 在 运 行 select(boolean
+         * oldWakenUp) 之 前 ， 若 有 线 程 触 发 了 wakeUp 动 作 ， 则 需 要 保 证
+         * tsakQueue队列中的任务得到了及时处理，防止等待timeoutMillis超
+         * 时后处理。
+         */
         return hasTasks ? selectSupplier.get() : SelectStrategy.SELECT;
     }
 }
